@@ -4,7 +4,6 @@ import (
 	"sort"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/wyw14/cry-96/internal/model"
 )
 
@@ -38,12 +37,4 @@ func (s *Sweeper) Expired() []ExpiredLease {
 		return result[i].Lease.VesselID.String() < result[j].Lease.VesselID.String()
 	})
 	return result
-}
-
-func (s *Sweeper) Reassign(vesselID uuid.UUID, previousOwner, newOwner string, ttl time.Duration) (model.Lease, error) {
-	current, ok := s.registry.Get(vesselID)
-	if ok && current.Owner == previousOwner && current.Active(s.now()) {
-		return model.Lease{}, ErrLeaseStillActive
-	}
-	return s.registry.Assign(vesselID, newOwner, ttl, s.now())
 }

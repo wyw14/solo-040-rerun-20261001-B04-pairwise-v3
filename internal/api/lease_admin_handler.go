@@ -13,7 +13,9 @@ func expiredLeasesHandler(runtime *Runtime) http.HandlerFunc {
 }
 
 type reassignInput struct {
+	ChamberID     string `json:"chamber_id"`
 	PreviousOwner string `json:"previous_owner"`
+	PreviousToken uint64 `json:"previous_token"`
 	NewOwner      string `json:"new_owner"`
 	TTLSeconds    int    `json:"ttl_seconds"`
 }
@@ -30,7 +32,11 @@ func reassignLeaseHandler(runtime *Runtime) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, err)
 			return
 		}
-		value, err := runtime.LeaseSweeper.Reassign(vesselID, input.PreviousOwner, input.NewOwner, durationSeconds(input.TTLSeconds))
+		value, err := runtime.Leases.Takeover(
+			r.Context(), input.ChamberID, vesselID,
+			input.PreviousOwner, input.PreviousToken,
+			input.NewOwner, durationSeconds(input.TTLSeconds),
+		)
 		if err != nil {
 			writeError(w, http.StatusConflict, err)
 			return
