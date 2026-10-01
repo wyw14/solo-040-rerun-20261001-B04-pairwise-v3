@@ -1,9 +1,12 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+
+	"github.com/wyw14/cry-96/internal/lease"
 )
 
 func expiredLeasesHandler(runtime *Runtime) http.HandlerFunc {
@@ -13,6 +16,7 @@ func expiredLeasesHandler(runtime *Runtime) http.HandlerFunc {
 }
 
 type reassignInput struct {
+	ChamberID     string `json:"chamber_id"`
 	PreviousOwner string `json:"previous_owner"`
 	NewOwner      string `json:"new_owner"`
 	TTLSeconds    int    `json:"ttl_seconds"`
@@ -25,17 +29,44 @@ func reassignLeaseHandler(runtime *Runtime) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, err)
 			return
 		}
+		if input.ChamberID == "" || input.PreviousOwner == "" || input.NewOwner == "" {
+			writeError(w, http.StatusBadRequest, errors.New("chamber_id, previous_owner and new_owner are required"))
+			return
+		}
+		if input.PreviousOwner == input.NewOwner {
+			writeError(w, http.StatusBadRequest, errors.New("new_owner must differ from previous_owner"))
+			return
+		}
 		vesselID, err := parseUUID(chi.URLParam(r, "vesselID"))
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err)
 			return
 		}
-		value, err := runtime.LeaseSweeper.Reassign(vesselID, input.PreviousOwner, input.NewOwner, durationSeconds(input.TTLSeconds))
+		value, err := runtime.Leases.Takeover(
+			r.Context(), input.ChamberID, vesselID, input.PreviousOwner, input.NewOwner,
+			durationSeconds(input.TTLSeconds),
+		)
 		if err != nil {
-			writeError(w, http.StatusConflict, err)
+			writeError(w, leaseErrorStatus(err), err)
 			return
 		}
 		writeJSON(w, http.StatusOK, value)
+	}
+}
+
+// leaseErrorStatus maps succession failures to 409: a mismatched previous
+// owner, an active lease or an absent lease all describe a state in which the
+// requested ownership transition cannot be performed.
+func leaseErrorStatus(err error) int {
+	switch {
+	case errors.Is(err, lease.ErrLeaseStillActive),
+		errors.Is(err, lease.ErrLeaseOwnerMismatch),
+		errors.Is(err, lease.ErrLeaseNotFound),
+		errors.Is(err, lease.ErrLeaseExists),
+		errors.Is(err, lease.ErrLeaseTokenStale):
+		return http.StatusConflict
+	default:
+		return http.StatusInternalServerError
 	}
 }
 
@@ -58,7 +89,7 @@ func releaseLeaseHandler(runtime *Runtime) http.HandlerFunc {
 			return
 		}
 		if err := runtime.Leases.Release(r.Context(), input.ChamberID, vesselID, input.Owner, input.Token); err != nil {
-			writeError(w, http.StatusConflict, err)
+			writeError(w, leaseErrorStatus(err), err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"released": true})

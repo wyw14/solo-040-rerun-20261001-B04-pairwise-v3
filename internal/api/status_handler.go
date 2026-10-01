@@ -81,7 +81,10 @@ func leaseMutationHandler(runtime *Runtime, heartbeat bool) http.HandlerFunc {
 		var result model.Lease
 		if heartbeat {
 			result, err = runtime.Leases.Heartbeat(r.Context(), input.ChamberID, vesselID, input.Owner, input.Token, ttl)
-			if err == nil && !runtime.Leases.Authorized(vesselID, input.Owner, input.Token) {
+			// Validate the lease the renewal actually returned. Re-reading the
+			// registry here would race a concurrent takeover that can install
+			// a newer fencing token between the renewal and the check.
+			if err == nil && !runtime.Leases.AuthorizedLease(vesselID, input.Owner, result) {
 				err = errors.New("renewed lease is not authorized for admission")
 			}
 		} else {
